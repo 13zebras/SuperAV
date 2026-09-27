@@ -42,12 +42,14 @@ enum SoundSourceWorkflow {
                 progress("Killing SoundSource…")
                 killSoundSourceQuietly()
                 try waitUntilSoundSourceTerminated()
+								Thread.sleep(forTimeInterval: 1)
             } else {
                 progress("Starting SoundSource…")
                 try openSoundSource()
                 try waitUntilSoundSourceRunning()
+								Thread.sleep(forTimeInterval: 1)
             }
-            // progress("Done toggling SoundSource")
+            progress(running ? "SoundSource killed" : "SoundSource Running")
             return
         }
 
@@ -72,7 +74,7 @@ enum SoundSourceWorkflow {
         progress("Volume from \(lowVolume) to \(restoreVolume)…")
         try rampOutputVolume(from: lowVolume, to: restoreVolume, step: 3, pauseSec: restoreDelaySec)
 
-        progress(decision == .kill ? "Done killing SoundSource" : "Done reStarting SoundSource")
+        progress(decision == .kill ? "SoundSource killed" : "SoundSource reStarted")
     }
 }
 

@@ -70,6 +70,7 @@ private final class SoundSourceViewModel: ObservableObject {
   @Published private(set) var isSoundSourceOn: Bool
 
   private var statusPollTask: Task<Void, Never>?
+  private var statusClearTask: Task<Void, Never>?
 
   init() {
     isSoundSourceOn = Self.soundSourceIsRunning
@@ -90,6 +91,9 @@ private final class SoundSourceViewModel: ObservableObject {
     isRunning = true
     status = nil
     hasError = false
+    // Cancel any pending clear from a previous run so it can't
+    // blank out this run's messages.
+    statusClearTask?.cancel()
 
     Task.detached {
       do {
@@ -100,14 +104,34 @@ private final class SoundSourceViewModel: ObservableObject {
         }
         await MainActor.run {
           self.isRunning = false
+          // Variant 1: schedule the clear only now that the workflow
+          // has finished, so intermediate progress messages are never
+          // cleared mid-run (even the long volume ramps).
+          self.scheduleStatusClear()
         }
       } catch {
         await MainActor.run {
           self.isRunning = false
           self.status = error.localizedDescription
           self.hasError = true
+          // Variant 2: no clear scheduled — error messages stay on
+          // screen until the next run.
         }
       }
+    }
+  }
+
+  /// Blank the status line 3 seconds after it was scheduled.
+  /// Only called on successful completion; never for errors.
+  private func scheduleStatusClear() {
+    // Variant 2 (defensive): never auto-clear an error message.
+    guard !hasError else { return }
+
+    statusClearTask?.cancel()
+    statusClearTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(2))
+      guard !Task.isCancelled else { return }
+      self?.status = nil
     }
   }
 
@@ -817,8 +841,8 @@ private struct ContentView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      VStack(alignment: .leading, spacing: 2) {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+      VStack(alignment: .leading, spacing: 0) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
           Text("SoundSource")
             .font(.title2.bold())
           SoundSourceStatus(isOn: soundSourceModel.isSoundSourceOn)
@@ -854,14 +878,15 @@ private struct ContentView: View {
         // .padding(.top, 14)
 
         Text(soundSourceModel.status ?? " ")
-          .font(.system(size: 13))
+          .font(.system(size: 11))
           .italic()
           .foregroundStyle(soundSourceModel.hasError ? Color.red : Color.white.opacity(0.65))
-          .padding(.top, 4)
+          .padding(.top, 6)
       }
 
       Divider()
-        .padding(.vertical, 8)
+        .padding(.bottom, 8)
+				// .padding(.top, 4)
 
       VStack(alignment: .leading, spacing: 0) {
         VStack(alignment: .leading, spacing: 6) {
@@ -885,7 +910,7 @@ private struct ContentView: View {
 
 					if let message = balanceModel.message {
 						Text(message)
-							.font(.system(size: 13))
+							.font(.system(size: 11))
 							.italic()
 							.foregroundStyle(balanceModel.hasError ? Color.red : Color.white.opacity(0.65))
 							.fixedSize(horizontal: false, vertical: true)
@@ -959,8 +984,8 @@ private struct ContentView: View {
       HStack {
         Spacer()
         ActionButton(
-          title: "Quit", key: "q", color: Color(hex: 0x1D1D21),
-          caption: "Q / esc", width: 192, borderColor: Color(hex: 0x353538),
+          title: "Quit", key: "q", color: Color(hex: 0x19191C),
+          caption: "Q / esc", width: 160, borderColor: Color(hex: 0x353538),
           isHotkeyPressed: false,
           isEnabled: true
         ) {
@@ -968,6 +993,7 @@ private struct ContentView: View {
         }
         Spacer()
       }
+			.padding(.top, 8)
     }
     .padding(22)
     .frame(width: 350)
