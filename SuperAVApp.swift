@@ -603,7 +603,11 @@ private struct VolumeSlider: View {
   let isEnabled: Bool
 
   private var accentColor: Color {
-    Color(red: 1.0, green: 0.75, blue: 0.0)
+    Color(red: 0.1, green: 0.6, blue: 0.0)
+  }
+
+  private var accentColorPercent: Color {
+    Color(red: 0.2, green: 0.9, blue: 0)
   }
 
   private var percentageText: String {
@@ -619,7 +623,7 @@ private struct VolumeSlider: View {
         Spacer()
         Text(percentageText)
           .font(.system(size: 13, design: .monospaced))
-          .foregroundStyle(accentColor)
+          .foregroundStyle(accentColorPercent)
       }
 
       HStack(spacing: 8) {
@@ -960,7 +964,7 @@ private struct ContentView: View {
 							.padding(.top, 2)
 					}
         }
-        .padding(.top, 12)
+        .padding(.top, 16)
 
         HStack(spacing: 8) {
           ActionButton(
@@ -992,14 +996,14 @@ private struct ContentView: View {
           model: volumeModel,
           isEnabled: !soundSourceModel.isRunning
         )
-        .padding(.top, 16)
+        .padding(.top, 20)
       }
 			.padding(.bottom, 8)
 
       Divider()
         .padding(.vertical, 8)
 
-      VStack(alignment: .leading, spacing: 12) {
+      VStack(alignment: .leading, spacing: 16) {
         Text("Display Brightness")
           .font(.title2.bold())
 
