@@ -248,6 +248,54 @@ enum SystemVolume {
         return percentage(channels.reduce(0, +) / Float32(channels.count))
     }
 
+    /// Set the default device's output volume (0-100) through CoreAudio.
+    /// Returns false when neither the main volume scalar nor the virtual
+    /// master volume is settable; per-channel writes are skipped because
+    /// they would overwrite the balance.
+    @discardableResult
+    static func setPercentage(_ percentage: Int) -> Bool {
+        guard let deviceID = try? AudioBalance.defaultOutputDevice() else {
+            return false
+        }
+        let scalar = Float32(min(max(percentage, 0), 100)) / 100
+        return writeScalar(scalar, deviceID: deviceID, selector: kAudioDevicePropertyVolumeScalar)
+            || writeScalar(scalar, deviceID: deviceID, selector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume)
+    }
+
+    private static func writeScalar(
+        _ scalar: Float32,
+        deviceID: AudioDeviceID,
+        selector: AudioObjectPropertySelector
+    ) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectHasProperty(deviceID, &address) else {
+            return false
+        }
+
+        var isSettable: DarwinBoolean = false
+        guard
+            AudioObjectIsPropertySettable(deviceID, &address, &isSettable) == noErr,
+            isSettable.boolValue
+        else {
+            return false
+        }
+
+        var value = scalar
+        let status = AudioObjectSetPropertyData(
+            deviceID,
+            &address,
+            0,
+            nil,
+            UInt32(MemoryLayout<Float32>.size),
+            &value
+        )
+        return status == noErr
+    }
+
     private static func readScalar(
         deviceID: AudioDeviceID,
         selector: AudioObjectPropertySelector,

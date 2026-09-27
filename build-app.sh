@@ -9,6 +9,31 @@ RESOURCES="$CONTENTS/Resources"
 ICON_SOURCE="$ROOT/speakers-3-colorful.png"
 ICONSET="$ROOT/.SuperAV.iconset"
 
+# The Command Line Tools toolchain lacks the SwiftUI macro plugin that
+# @State needs, so build with Xcode's toolchain when it's installed.
+XCODE_DEVELOPER="/Applications/Xcode.app/Contents/Developer"
+if [[ -z "${DEVELOPER_DIR:-}" && -d "$XCODE_DEVELOPER" ]]; then
+  export DEVELOPER_DIR="$XCODE_DEVELOPER"
+fi
+
+# Compile before touching the existing bundle so a failed build leaves the
+# last working app in place.
+BUILD_BINARY="$ROOT/.SuperAV.build"
+swiftc \
+  -parse-as-library \
+  -target arm64-apple-macosx26.0 \
+  -framework SwiftUI \
+  -framework CoreAudio \
+  -framework AudioToolbox \
+  -framework Cocoa \
+  -framework CoreGraphics \
+  -framework IOKit \
+  "$ROOT/SuperAVApp.swift" \
+  "$ROOT/AudioBalance.swift" \
+  "$ROOT/SoundSourceWorkflow.swift" \
+  "$ROOT/DisplayBrightness.swift" \
+  -o "$BUILD_BINARY"
+
 rm -rf "$APP" "$ICONSET"
 mkdir -p "$MACOS" "$RESOURCES" "$ICONSET"
 
@@ -37,20 +62,7 @@ make_icon 1024 icon_512x512@2x.png
 iconutil --convert icns "$ICONSET" --output "$RESOURCES/SuperAV.icns"
 rm -rf "$ICONSET"
 
-swiftc \
-  -parse-as-library \
-  -target arm64-apple-macosx26.0 \
-  -framework SwiftUI \
-  -framework CoreAudio \
-  -framework AudioToolbox \
-  -framework Cocoa \
-  -framework CoreGraphics \
-  -framework IOKit \
-  "$ROOT/SuperAVApp.swift" \
-  "$ROOT/AudioBalance.swift" \
-  "$ROOT/SoundSourceWorkflow.swift" \
-  "$ROOT/DisplayBrightness.swift" \
-  -o "$MACOS/SuperAV"
+mv "$BUILD_BINARY" "$MACOS/SuperAV"
 
 cat > "$CONTENTS/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

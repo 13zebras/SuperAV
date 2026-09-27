@@ -145,7 +145,28 @@ private final class SoundSourceViewModel: ObservableObject {
 @MainActor
 private final class VolumeViewModel: ObservableObject {
   @Published private(set) var volume: Int?
+  @Published private(set) var errorMessage: String?
   private var pollTask: Task<Void, Never>?
+  private var isEditing = false
+
+  func setVolume(_ percentage: Double) {
+    let value = Int(percentage.rounded())
+    volume = value
+    if SystemVolume.setPercentage(value) {
+      errorMessage = nil
+      return
+    }
+    do {
+      try SoundSourceWorkflow.setOutputVolume(value)
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  func setEditing(_ isEditing: Bool) {
+    self.isEditing = isEditing
+  }
 
   /// Poll the output volume so the display tracks the workflow's volume
   /// ramps as well as external changes (system volume keys, other apps).
@@ -156,7 +177,7 @@ private final class VolumeViewModel: ObservableObject {
         let value =
           SystemVolume.readPercentage() ?? (try? SoundSourceWorkflow.currentOutputVolume())
         await MainActor.run {
-          if let value {
+          if let value, !self.isEditing {
             self.volume = value
           }
         }
@@ -432,6 +453,7 @@ private struct ActionButton: View {
 
 private struct BrightnessPresetButton: View {
   let title: String
+  let displayName: String
   let color: Color
   let isEnabled: Bool
   let action: () -> Void
@@ -447,7 +469,7 @@ private struct BrightnessPresetButton: View {
         .padding(.vertical, 8)
         .contentShape(Rectangle())
     }
-    .accessibilityLabel("Set built-in display brightness to \(title)")
+    .accessibilityLabel("Set \(displayName) brightness to \(title)")
     .buttonStyle(
       SolidButtonStyle(
         color: color,
@@ -475,15 +497,9 @@ private struct SoundSourceStatus: View {
 
 private struct BalanceSummary: View {
   let rightPercentage: Int
-  let volume: Int?
 
   private var leftPercentage: Int {
     100 - rightPercentage
-  }
-
-  private var volumeText: String {
-    guard let volume else { return "–" }
-    return "\(volume)"
   }
 
   private func color(for percentage: Int) -> Color {
@@ -497,31 +513,23 @@ private struct BalanceSummary: View {
   }
 
   var body: some View {
-    HStack(spacing: 14) {
+    HStack(spacing: 10) {
       HStack(spacing: 3) {
-        Text("Left:")
+        Text("L:")
           .foregroundStyle(.secondary)
         Text("\(leftPercentage)%")
           .foregroundStyle(color(for: leftPercentage))
           .fontWeight(.semibold)
       }
       HStack(spacing: 3) {
-        Text("Right:")
+        Text("R:")
           .foregroundStyle(.secondary)
         Text("\(rightPercentage)%")
           .foregroundStyle(color(for: rightPercentage))
           .fontWeight(.semibold)
       }
-      HStack(spacing: 3) {
-        Text("Volume:")
-          .foregroundStyle(.secondary)
-        Text(volumeText)
-          .foregroundStyle(Color(red: 1.0, green: 0.75, blue: 0.0))
-          .fontWeight(.semibold)
-      }
-      .padding(.leading, 8)
     }
-    .font(.system(size: 14))
+    .font(.system(size: 13))
   }
 }
 
@@ -533,10 +541,22 @@ private struct BalanceSlider: View {
     Color(red: 0.10, green: 0.30, blue: 0.70)
   }
 
+  /// Drags that land within this many points of center snap to 50, so the
+  /// thumb pulls into center on the way in and has to be dragged clear of
+  /// the zone to leave it.
+  private static let centerSnapRadius = 4.0
+
   private var value: Binding<Double> {
     Binding(
       get: { model.currentValue },
-      set: { model.setPreset($0) }
+      set: { newValue in
+        let isNearCenter = abs(newValue - 50) <= Self.centerSnapRadius
+        let target = isNearCenter ? 50 : newValue
+        if target == 50, model.currentValue.rounded() != 50 {
+          NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+        model.setPreset(target)
+      }
     )
   }
 
@@ -575,6 +595,61 @@ private struct BalanceSlider: View {
     }
     .disabled(!isEnabled)
     .opacity(isEnabled ? 1 : 0.45)
+  }
+}
+
+private struct VolumeSlider: View {
+  @ObservedObject var model: VolumeViewModel
+  let isEnabled: Bool
+
+  private var accentColor: Color {
+    Color(red: 1.0, green: 0.75, blue: 0.0)
+  }
+
+  private var percentageText: String {
+    guard let volume = model.volume else { return "–" }
+    return "\(volume)%"
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 5) {
+      HStack {
+        Text("System Volume")
+          .font(.headline)
+        Spacer()
+        Text(percentageText)
+          .font(.system(size: 13, design: .monospaced))
+          .foregroundStyle(accentColor)
+      }
+
+      HStack(spacing: 8) {
+        Image(systemName: "speaker.fill")
+          .foregroundStyle(.secondary)
+        Slider(
+          value: Binding(
+            get: { Double(model.volume ?? 0) },
+            set: { model.setVolume($0) }
+          ),
+          in: 0...100,
+          step: 1,
+          onEditingChanged: model.setEditing
+        )
+        .tint(accentColor)
+        .disabled(!isEnabled || model.volume == nil)
+        .accessibilityLabel("System volume")
+        .accessibilityValue(percentageText)
+        Image(systemName: "speaker.wave.3.fill")
+          .foregroundStyle(.secondary)
+      }
+      .opacity(isEnabled ? 1 : 0.45)
+
+      if let errorMessage = model.errorMessage {
+        Text(errorMessage)
+          .font(.caption)
+          .foregroundStyle(Color.red)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
   }
 }
 
@@ -668,66 +743,35 @@ private struct ContentView: View {
     return 12
   }
 
-  private var builtInDisplayIndex: Int? {
-    brightnessModel.displays.firstIndex { $0.isBuiltIn }
+  private static let brightnessPresetColors: [Color] = [
+    Color(hex: 0x0F0103),
+    Color(hex: 0x31010B),
+    Color(hex: 0x61010D),
+    Color(hex: 0x810010),
+    Color(hex: 0xA10012),
+  ]
+
+  private func brightnessPresets(for display: BrightnessDisplay) -> [Int] {
+    display.isBuiltIn ? [0, 5, 50, 75, 100] : [0, 40, 60, 80, 100]
   }
 
-  private var canControlBuiltInDisplay: Bool {
-    guard let builtInDisplayIndex else {
-      return false
-    }
-    return brightnessModel.displays[builtInDisplayIndex].isSupported
-  }
-
-  private var brightnessPresetButtons: some View {
+  private func brightnessPresetButtons(for display: BrightnessDisplay) -> some View {
     HStack(spacing: 8) {
-      BrightnessPresetButton(
-        title: "0",
-        color: Color(hex: 0x0F0103),
-        isEnabled: canControlBuiltInDisplay
-      ) {
-        setBuiltInDisplayBrightness(0)
-      }
-      BrightnessPresetButton(
-        title: "5",
-        color: Color(hex: 0x31010B),
-        isEnabled: canControlBuiltInDisplay
-      ) {
-        setBuiltInDisplayBrightness(5)
-      }
-      BrightnessPresetButton(
-        title: "50",
-        color: Color(hex: 0x61010D),
-        isEnabled: canControlBuiltInDisplay
-      ) {
-        setBuiltInDisplayBrightness(50)
-      }
-      BrightnessPresetButton(
-        title: "75",
-        color: Color(hex: 0x810010),
-        isEnabled: canControlBuiltInDisplay
-      ) {
-        setBuiltInDisplayBrightness(75)
-      }
-      BrightnessPresetButton(
-        title: "100",
-        color: Color(hex: 0xA10012),
-        isEnabled: canControlBuiltInDisplay
-      ) {
-        setBuiltInDisplayBrightness(100)
+      ForEach(Array(brightnessPresets(for: display).enumerated()), id: \.offset) {
+        index, value in
+        BrightnessPresetButton(
+          title: "\(value)",
+          displayName: display.name,
+          color: Self.brightnessPresetColors[index],
+          isEnabled: display.isSupported
+        ) {
+          brightnessModel.setPercentage(Double(value), for: display.id)
+        }
       }
     }
     .frame(maxWidth: .infinity)
     .padding(.top, 12)
     // .padding(.bottom, 8)
-  }
-
-  private func setBuiltInDisplayBrightness(_ percentage: Double) {
-    guard let builtInDisplayIndex else {
-      return
-    }
-    let display = brightnessModel.displays[builtInDisplayIndex]
-    brightnessModel.setPercentage(percentage, for: display.id)
   }
 
   private func triggerBalanceHotkey(_ key: Character, percentage: Double) {
@@ -889,19 +933,18 @@ private struct ContentView: View {
 				// .padding(.top, 4)
 
       VStack(alignment: .leading, spacing: 0) {
-        VStack(alignment: .leading, spacing: 6) {
-          Text("Audio Balance")
-            .font(.title2.bold())
-          BalanceSummary(
-            rightPercentage: Int(balanceModel.currentValue.rounded()),
-            volume: volumeModel.volume
-          )
-        }
-				// .padding(.bottom, 10)
+        Text("Audio")
+          .font(.title2.bold())
 
         VStack(alignment: .leading, spacing: 6) {
-          Text("Custom Balance")
-            .font(.headline)
+          HStack {
+            Text("Custom Balance")
+              .font(.headline)
+            Spacer()
+            BalanceSummary(
+              rightPercentage: Int(balanceModel.currentValue.rounded())
+            )
+          }
 
           BalanceSlider(
             model: balanceModel,
@@ -944,6 +987,12 @@ private struct ContentView: View {
         }
         .frame(maxWidth: .infinity)
 				.padding(.top, 16)
+
+        VolumeSlider(
+          model: volumeModel,
+          isEnabled: !soundSourceModel.isRunning
+        )
+        .padding(.top, 16)
       }
 			.padding(.bottom, 8)
 
@@ -968,9 +1017,7 @@ private struct ContentView: View {
                 model: brightnessModel
               )
 
-              if display.isBuiltIn {
-                brightnessPresetButtons
-              }
+              brightnessPresetButtons(for: display)
             }
             .padding(.top, brightnessTopPadding(for: index))
           }

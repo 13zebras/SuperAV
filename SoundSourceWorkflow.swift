@@ -27,6 +27,12 @@ enum SoundSourceWorkflow {
         try getOutputVolume()
     }
 
+    /// Set the system output volume (0-100) via AppleScript.
+    /// Used as a fallback when the device exposes no settable CoreAudio volume.
+    static func setOutputVolume(_ volume: Int) throws {
+        _ = try execAppleScript("set volume output volume \(min(max(volume, 0), 100))")
+    }
+
     /// Run the kill/restart/toggle flow for the given decision.
     /// `lowVolume` is the output volume the system is ramped down to before
     /// SoundSource is killed (the GUI passes no CLI arg, so it defaults to 0).
